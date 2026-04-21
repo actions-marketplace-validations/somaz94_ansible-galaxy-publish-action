@@ -1,0 +1,4 @@
+---
+- name: Print greeting
+  ansible.builtin.debug:
+    msg: "Hello from sample_role fixture"

@@ -1,0 +1,226 @@
+name: Ansible Galaxy Publish Action
+description: Publish an Ansible collection or role to Galaxy with one composite action. Supports dry-run.
+author: somaz94
+
+branding:
+  icon: upload-cloud
+  color: red
+
+inputs:
+  type:
+    description: "Publish target type: 'collection' or 'role'."
+    required: true
+  api_key:
+    description: "Ansible Galaxy API key. Required unless dry_run is true."
+    required: false
+    default: ''
+  namespace:
+    description: "Galaxy namespace. Required for 'role' (used with role_name) and for 'collection' when collection_namespace is empty."
+    required: false
+    default: ''
+  role_name:
+    description: "Role name under 'namespace' (role mode, e.g., 'ansible_kubectl_krew')."
+    required: false
+    default: ''
+  collection_namespace:
+    description: "Collection namespace used to locate the built tarball (collection mode). Falls back to 'namespace' when empty."
+    required: false
+    default: ''
+  collection_name:
+    description: "Collection name used to locate the built tarball (collection mode, e.g., 'ansible_k8s_iac_tool')."
+    required: false
+    default: ''
+  working_directory:
+    description: "Directory containing galaxy.yml (collection) or meta/main.yml (role)."
+    required: false
+    default: '.'
+  python_version:
+    description: "Python version installed by actions/setup-python."
+    required: false
+    default: '3.12'
+  ansible_version:
+    description: "ansible version pin for pip (e.g., '9.5.1'). Empty installs the latest."
+    required: false
+    default: ''
+  dry_run:
+    description: "When 'true', build the collection (if applicable) but skip the publish/import call. Useful for CI validation without a live API key."
+    required: false
+    default: 'false'
+
+outputs:
+  published_ref:
+    description: "Published reference, e.g., 'collection/somaz94.ansible_k8s_iac_tool@1.2.0' or 'role/somaz94.ansible_kubectl_krew'. Prefixed with 'dry-run:' when dry_run is true."
+    value: ${{ steps.publish.outputs.published_ref }}
+  artifact_path:
+    description: "Absolute path to the built collection tarball (collection mode only; empty for role mode)."
+    value: ${{ steps.publish.outputs.artifact_path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        TYPE: ${{ inputs.type }}
+        API_KEY: ${{ inputs.api_key }}
+        NAMESPACE: ${{ inputs.namespace }}
+        ROLE_NAME: ${{ inputs.role_name }}
+        COLLECTION_NAMESPACE: ${{ inputs.collection_namespace }}
+        COLLECTION_NAME: ${{ inputs.collection_name }}
+        WORKING_DIRECTORY: ${{ inputs.working_directory }}
+        DRY_RUN: ${{ inputs.dry_run }}
+      run: |
+        set -euo pipefail
+        echo "::group::Validate inputs"
+
+        if [[ "$TYPE" != "collection" && "$TYPE" != "role" ]]; then
+          echo "::error::input 'type' must be 'collection' or 'role' (got '$TYPE')"
+          exit 1
+        fi
+
+        if [[ "$DRY_RUN" != "true" && -z "${API_KEY// }" ]]; then
+          echo "::error::input 'api_key' is required when dry_run is false"
+          exit 1
+        fi
+
+        if [[ ! -d "$WORKING_DIRECTORY" ]]; then
+          echo "::error::working_directory '$WORKING_DIRECTORY' is not a directory"
+          exit 1
+        fi
+
+        if [[ "$TYPE" == "role" ]]; then
+          if [[ -z "${NAMESPACE// }" || -z "${ROLE_NAME// }" ]]; then
+            echo "::error::role mode requires both 'namespace' and 'role_name'"
+            exit 1
+          fi
+        else
+          # collection mode — collection_namespace defaults to namespace
+          effective_cns="${COLLECTION_NAMESPACE:-$NAMESPACE}"
+          if [[ -z "${effective_cns// }" || -z "${COLLECTION_NAME// }" ]]; then
+            echo "::error::collection mode requires 'collection_name' and one of 'collection_namespace' / 'namespace'"
+            exit 1
+          fi
+        fi
+
+        echo "type=$TYPE"
+        echo "dry_run=$DRY_RUN"
+        echo "working_directory=$WORKING_DIRECTORY"
+        echo "::endgroup::"
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install Ansible
+      shell: bash
+      env:
+        ANSIBLE_VERSION: ${{ inputs.ansible_version }}
+      run: |
+        set -euo pipefail
+        echo "::group::pip install ansible"
+        python -m pip install --upgrade pip
+        if [[ -n "$ANSIBLE_VERSION" ]]; then
+          pip install "ansible==${ANSIBLE_VERSION}"
+        else
+          pip install ansible
+        fi
+        ansible --version
+        echo "::endgroup::"
+
+    - name: Publish to Galaxy
+      id: publish
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        TYPE: ${{ inputs.type }}
+        API_KEY: ${{ inputs.api_key }}
+        NAMESPACE: ${{ inputs.namespace }}
+        ROLE_NAME: ${{ inputs.role_name }}
+        COLLECTION_NAMESPACE: ${{ inputs.collection_namespace }}
+        COLLECTION_NAME: ${{ inputs.collection_name }}
+        DRY_RUN: ${{ inputs.dry_run }}
+      run: |
+        set -euo pipefail
+
+        output_line() {
+          if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+            echo "$1" >>"$GITHUB_OUTPUT"
+          fi
+        }
+
+        summary() {
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            echo "$1" >>"$GITHUB_STEP_SUMMARY"
+          fi
+        }
+
+        if [[ "$TYPE" == "collection" ]]; then
+          effective_cns="${COLLECTION_NAMESPACE:-$NAMESPACE}"
+
+          echo "::group::ansible-galaxy collection build"
+          ansible-galaxy collection build --force
+          echo "::endgroup::"
+
+          # Locate the tarball produced by 'collection build'. The filename is
+          # "<namespace>-<name>-<version>.tar.gz" based on galaxy.yml.
+          tarball=$(ls -1 "${effective_cns}-${COLLECTION_NAME}"-*.tar.gz | sort -V | tail -n1)
+          if [[ -z "$tarball" || ! -f "$tarball" ]]; then
+            echo "::error::failed to locate built tarball matching '${effective_cns}-${COLLECTION_NAME}-*.tar.gz'"
+            exit 1
+          fi
+          abs_tarball="$(pwd)/$tarball"
+          echo "artifact: $abs_tarball"
+          output_line "artifact_path=$abs_tarball"
+
+          # Extract version from tarball filename (strip prefix + .tar.gz)
+          version="${tarball#${effective_cns}-${COLLECTION_NAME}-}"
+          version="${version%.tar.gz}"
+          ref="collection/${effective_cns}.${COLLECTION_NAME}@${version}"
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "::notice::dry_run=true — skipping 'ansible-galaxy collection publish'"
+            output_line "published_ref=dry-run:${ref}"
+            summary "### Ansible Galaxy Publish — **dry-run**"
+            summary ""
+            summary "- Type: \`collection\`"
+            summary "- Would publish: \`${ref}\`"
+            summary "- Artifact: \`${abs_tarball}\`"
+            exit 0
+          fi
+
+          echo "::group::ansible-galaxy collection publish"
+          ansible-galaxy collection publish "$tarball" --api-key="$API_KEY"
+          echo "::endgroup::"
+
+          output_line "published_ref=${ref}"
+          summary "### Ansible Galaxy Publish"
+          summary ""
+          summary "- Type: \`collection\`"
+          summary "- Published: \`${ref}\`"
+          summary "- Artifact: \`${abs_tarball}\`"
+        else
+          # role mode
+          ref="role/${NAMESPACE}.${ROLE_NAME}"
+          output_line "artifact_path="
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "::notice::dry_run=true — skipping 'ansible-galaxy role import'"
+            output_line "published_ref=dry-run:${ref}"
+            summary "### Ansible Galaxy Publish — **dry-run**"
+            summary ""
+            summary "- Type: \`role\`"
+            summary "- Would import: \`${ref}\`"
+            exit 0
+          fi
+
+          echo "::group::ansible-galaxy role import"
+          ansible-galaxy role import --api-key "$API_KEY" "$NAMESPACE" "$ROLE_NAME"
+          echo "::endgroup::"
+
+          output_line "published_ref=${ref}"
+          summary "### Ansible Galaxy Publish"
+          summary ""
+          summary "- Type: \`role\`"
+          summary "- Imported: \`${ref}\`"
+        fi

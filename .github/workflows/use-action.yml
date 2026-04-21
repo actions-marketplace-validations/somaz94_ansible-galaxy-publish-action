@@ -1,0 +1,88 @@
+name: Smoke Test (Released Action)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: 'workflow run'
+        required: true
+        default: 'true'
+  workflow_run:
+    workflows: ["Create release"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test-collection:
+    name: Smoke Test (collection, dry-run)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run released action (collection dry-run) against fixture
+        id: galaxy
+        uses: somaz94/ansible-galaxy-publish-action@v1
+        with:
+          type: collection
+          dry_run: true
+          working_directory: tests/fixtures/sample_collection
+          collection_namespace: somaz94
+          collection_name: sample_collection
+
+      - name: Verify outputs
+        run: |
+          REF='${{ steps.galaxy.outputs.published_ref }}'
+          ART='${{ steps.galaxy.outputs.artifact_path }}'
+          echo "published_ref=${REF}"
+          echo "artifact_path=${ART}"
+
+          expected_prefix='dry-run:collection/somaz94.sample_collection@'
+          case "${REF}" in
+            "${expected_prefix}"*) ;;
+            *)
+              echo "::error::expected published_ref to start with '${expected_prefix}', got '${REF}'"
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "${ART}" || ! -f "${ART}" ]]; then
+            echo "::error::artifact_path not present or missing: '${ART}'"
+            exit 1
+          fi
+          echo "[PASS] smoke test — collection dry-run"
+
+  smoke-test-role:
+    name: Smoke Test (role, dry-run)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run released action (role dry-run) against fixture
+        id: galaxy
+        uses: somaz94/ansible-galaxy-publish-action@v1
+        with:
+          type: role
+          dry_run: true
+          working_directory: tests/fixtures/sample_role
+          namespace: somaz94
+          role_name: sample_role
+
+      - name: Verify outputs
+        run: |
+          REF='${{ steps.galaxy.outputs.published_ref }}'
+          echo "published_ref=${REF}"
+          expected='dry-run:role/somaz94.sample_role'
+          if [[ "${REF}" != "${expected}" ]]; then
+            echo "::error::expected published_ref='${expected}', got '${REF}'"
+            exit 1
+          fi
+          echo "[PASS] smoke test — role dry-run"

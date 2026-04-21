@@ -1,0 +1,14 @@
+---
+namespace: somaz94
+name: sample_collection
+version: 0.0.1
+readme: README.md
+authors:
+  - somaz
+description: Minimal fixture collection used by ansible-galaxy-publish-action CI (dry-run only).
+license:
+  - MIT
+tags:
+  - testing
+  - fixture
+repository: https://github.com/somaz94/ansible-galaxy-publish-action

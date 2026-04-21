@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install yamllint
+
+      - name: Run yamllint
+        run: yamllint -d relaxed action.yml .github/workflows/ tests/
+
+      - name: Run actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          cache: true
+
+  test-collection:
+    name: Test Action (collection, dry-run)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run action (collection dry-run) against fixture
+        id: galaxy
+        uses: ./
+        with:
+          type: collection
+          dry_run: true
+          working_directory: tests/fixtures/sample_collection
+          collection_namespace: somaz94
+          collection_name: sample_collection
+
+      - name: Verify outputs
+        run: |
+          REF='${{ steps.galaxy.outputs.published_ref }}'
+          ART='${{ steps.galaxy.outputs.artifact_path }}'
+          echo "published_ref=${REF}"
+          echo "artifact_path=${ART}"
+
+          expected_prefix='dry-run:collection/somaz94.sample_collection@'
+          case "${REF}" in
+            "${expected_prefix}"*) ;;
+            *)
+              echo "::error::expected published_ref to start with '${expected_prefix}', got '${REF}'"
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "${ART}" ]]; then
+            echo "::error::expected artifact_path to be non-empty in collection mode"
+            exit 1
+          fi
+          if [[ ! -f "${ART}" ]]; then
+            echo "::error::artifact_path '${ART}' does not point at an existing file"
+            exit 1
+          fi
+          echo "[PASS] collection dry-run"
+
+  test-role:
+    name: Test Action (role, dry-run)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run action (role dry-run) against fixture
+        id: galaxy
+        uses: ./
+        with:
+          type: role
+          dry_run: true
+          working_directory: tests/fixtures/sample_role
+          namespace: somaz94
+          role_name: sample_role
+
+      - name: Verify outputs
+        run: |
+          REF='${{ steps.galaxy.outputs.published_ref }}'
+          ART='${{ steps.galaxy.outputs.artifact_path }}'
+          echo "published_ref=${REF}"
+          echo "artifact_path=${ART}"
+
+          expected='dry-run:role/somaz94.sample_role'
+          if [[ "${REF}" != "${expected}" ]]; then
+            echo "::error::expected published_ref='${expected}', got '${REF}'"
+            exit 1
+          fi
+          if [[ -n "${ART}" ]]; then
+            echo "::error::expected artifact_path to be empty in role mode, got '${ART}'"
+            exit 1
+          fi
+          echo "[PASS] role dry-run"
+
+  ci-result:
+    name: CI Result
+    if: always()
+    needs: [lint, test-collection, test-role]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "::error::lint failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-collection.result }}" != "success" ]]; then
+            echo "::error::test-collection failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-role.result }}" != "success" ]]; then
+            echo "::error::test-role failed"
+            exit 1
+          fi
+          echo "All CI jobs passed"
