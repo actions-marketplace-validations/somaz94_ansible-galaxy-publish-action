@@ -32,25 +32,27 @@ jobs:
           type: collection
           dry_run: true
           working_directory: tests/fixtures/sample_collection
-          collection_namespace: somaz94
-          collection_name: sample_collection
+          namespace: somaz94
+          name: sample_collection
 
       - name: Verify outputs
         run: |
           REF='${{ steps.galaxy.outputs.published_ref }}'
           ART='${{ steps.galaxy.outputs.artifact_path }}'
+          VER='${{ steps.galaxy.outputs.collection_version }}'
           echo "published_ref=${REF}"
           echo "artifact_path=${ART}"
+          echo "collection_version=${VER}"
 
-          expected_prefix='dry-run:collection/somaz94.sample_collection@'
-          case "${REF}" in
-            "${expected_prefix}"*) ;;
-            *)
-              echo "::error::expected published_ref to start with '${expected_prefix}', got '${REF}'"
-              exit 1
-              ;;
-          esac
-
+          expected_ref='dry-run:collection/somaz94.sample_collection@0.0.1'
+          if [[ "${REF}" != "${expected_ref}" ]]; then
+            echo "::error::expected published_ref='${expected_ref}', got '${REF}'"
+            exit 1
+          fi
+          if [[ "${VER}" != "0.0.1" ]]; then
+            echo "::error::expected collection_version='0.0.1', got '${VER}'"
+            exit 1
+          fi
           if [[ -z "${ART}" || ! -f "${ART}" ]]; then
             echo "::error::artifact_path not present or missing: '${ART}'"
             exit 1
@@ -74,7 +76,7 @@ jobs:
           dry_run: true
           working_directory: tests/fixtures/sample_role
           namespace: somaz94
-          role_name: sample_role
+          name: sample_role
 
       - name: Verify outputs
         run: |

@@ -6,18 +6,19 @@
 [![Top Language](https://img.shields.io/github/languages/top/somaz94/ansible-galaxy-publish-action)](https://github.com/somaz94/ansible-galaxy-publish-action)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Ansible%20Galaxy%20Publish%20Action-blue?logo=github)](https://github.com/marketplace/actions/ansible-galaxy-publish-action)
 
-A composite GitHub Action that publishes an [Ansible](https://www.ansible.com/) **collection** or **role** to [Ansible Galaxy](https://galaxy.ansible.com/). Installs Python and Ansible, then either runs `ansible-galaxy collection build && publish` (collection mode) or `ansible-galaxy role import` (role mode). Supports `dry_run` for CI validation without a live API key.
+A composite GitHub Action that publishes an [Ansible](https://www.ansible.com/) **collection** or **role** to [Ansible Galaxy](https://galaxy.ansible.com/). Installs Python and Ansible, then either runs `ansible-galaxy collection build && publish` (collection mode) or `ansible-galaxy role import` (role mode). Supports `dry_run` for CI validation without a live API key, and uploads the built tarball as a workflow artifact in dry-run mode for manual inspection.
 
 <br/>
 
 ## Features
 
-- One action for both publish paths: **collection** (`build` + `publish`) and **role** (`import`)
-- `dry_run: true` validates inputs and — for collections — still builds the tarball, without hitting Galaxy (ideal for pull-request CI)
-- Automatically locates the built tarball by `<namespace>-<name>-*.tar.gz` glob and picks the highest semver match
+- One action for both publish paths: **collection** (`build` + `publish`) and **role** (`import`) — selected via a single `type` input
+- Unified `namespace` + `name` input pair for both modes (no mode-specific flags)
+- `dry_run: true` validates inputs and — for collections — still builds the tarball and **uploads it as a workflow artifact**, without hitting Galaxy (ideal for pull-request CI)
+- Version is read directly from `galaxy.yml`, so `published_ref` is deterministic (no filename scraping)
 - Version pin for Ansible (`ansible_version`); empty = latest
-- Writes a per-run result to `$GITHUB_STEP_SUMMARY`
-- Exposes `published_ref` (e.g., `collection/somaz94.ansible_k8s_iac_tool@1.2.0`) and `artifact_path` outputs
+- Writes a per-run summary table to `$GITHUB_STEP_SUMMARY`
+- Exposes `published_ref`, `artifact_path`, and `collection_version` outputs
 
 <br/>
 
@@ -50,8 +51,8 @@ jobs:
         with:
           type: collection
           api_key: ${{ secrets.GALAXY_API_KEY }}
-          collection_namespace: somaz94
-          collection_name: ansible_k8s_iac_tool
+          namespace: somaz94
+          name: ansible_k8s_iac_tool
 ```
 
 <br/>
@@ -75,7 +76,7 @@ jobs:
           type: role
           api_key: ${{ secrets.GALAXY_API_KEY }}
           namespace: somaz94
-          role_name: ansible_kubectl_krew
+          name: ansible_kubectl_krew
 ```
 
 <br/>
@@ -90,11 +91,11 @@ jobs:
   with:
     type: collection
     dry_run: true
-    collection_namespace: somaz94
-    collection_name: ansible_k8s_iac_tool
+    namespace: somaz94
+    name: ansible_k8s_iac_tool
 ```
 
-The build step still runs (so broken `galaxy.yml` / missing files fail CI), but no publish call is made. The `published_ref` output is prefixed with `dry-run:` so downstream steps can branch on it.
+The build step still runs (so broken `galaxy.yml` / missing files fail CI), but no publish call is made. The built tarball is uploaded as a workflow artifact named `collection-<namespace>-<name>-<version>` so you can download and inspect it. The `published_ref` output is prefixed with `dry-run:` so downstream steps can branch on it.
 
 <br/>
 
@@ -106,8 +107,8 @@ The build step still runs (so broken `galaxy.yml` / missing files fail CI), but 
     type: collection
     api_key: ${{ secrets.GALAXY_API_KEY }}
     ansible_version: '9.5.1'
-    collection_namespace: somaz94
-    collection_name: ansible_k8s_iac_tool
+    namespace: somaz94
+    name: ansible_k8s_iac_tool
 ```
 
 <br/>
@@ -120,8 +121,8 @@ The build step still runs (so broken `galaxy.yml` / missing files fail CI), but 
     type: collection
     api_key: ${{ secrets.GALAXY_API_KEY }}
     working_directory: collections/somaz94/my_collection
-    collection_namespace: somaz94
-    collection_name: my_collection
+    namespace: somaz94
+    name: my_collection
 ```
 
 <br/>
@@ -134,13 +135,14 @@ The build step still runs (so broken `galaxy.yml` / missing files fail CI), but 
   with:
     type: collection
     api_key: ${{ secrets.GALAXY_API_KEY }}
-    collection_namespace: somaz94
-    collection_name: ansible_k8s_iac_tool
+    namespace: somaz94
+    name: ansible_k8s_iac_tool
 
 - name: Report
   if: always()
   run: |
     echo "Published: ${{ steps.galaxy.outputs.published_ref }}"
+    echo "Version:   ${{ steps.galaxy.outputs.collection_version }}"
     echo "Artifact:  ${{ steps.galaxy.outputs.artifact_path }}"
 ```
 
@@ -152,14 +154,12 @@ The build step still runs (so broken `galaxy.yml` / missing files fail CI), but 
 |-------|-------------|----------|---------|
 | `type` | Publish target type: `collection` or `role`. | Yes | — |
 | `api_key` | Ansible Galaxy API key. Required unless `dry_run: true`. | Conditional | `''` |
-| `namespace` | Galaxy namespace. Required for `role` (with `role_name`). In `collection` mode, used as a fallback when `collection_namespace` is empty. | Conditional | `''` |
-| `role_name` | Role name under `namespace` (role mode, e.g., `ansible_kubectl_krew`). | Conditional (role mode) | `''` |
-| `collection_namespace` | Namespace used to locate the built tarball (collection mode). Falls back to `namespace`. | Conditional (collection mode) | `''` |
-| `collection_name` | Collection name used to locate the built tarball (e.g., `ansible_k8s_iac_tool`). | Conditional (collection mode) | `''` |
+| `namespace` | Galaxy namespace (e.g., `somaz94`). Used for both modes. | Yes | — |
+| `name` | Collection or role name under `namespace` (e.g., `ansible_k8s_iac_tool` or `ansible_kubectl_krew`). | Yes | — |
 | `working_directory` | Directory containing `galaxy.yml` (collection) or `meta/main.yml` (role). | No | `.` |
 | `python_version` | Python version for `actions/setup-python`. | No | `3.12` |
 | `ansible_version` | pip pin for Ansible (e.g., `9.5.1`). Empty = latest. | No | `''` |
-| `dry_run` | When `true`, build the collection (if applicable) but skip `publish`/`import`. | No | `false` |
+| `dry_run` | When `true`, build the collection (if applicable), upload it as an artifact, and skip `publish`/`import`. | No | `false` |
 
 <br/>
 
@@ -168,7 +168,10 @@ The build step still runs (so broken `galaxy.yml` / missing files fail CI), but 
 | Output | Description |
 |--------|-------------|
 | `published_ref` | Published reference, e.g., `collection/somaz94.ansible_k8s_iac_tool@1.2.0` or `role/somaz94.ansible_kubectl_krew`. Prefixed with `dry-run:` when `dry_run` is true. |
-| `artifact_path` | Absolute path to the built collection tarball (collection mode only; empty for role mode). |
+| `artifact_path` | Absolute path to the built collection tarball on the runner (collection mode only; empty for role mode). |
+| `collection_version` | Version string read from `galaxy.yml` (collection mode only; empty for role mode). |
+
+In `collection` + `dry_run: true` mode, the tarball is also uploaded as a workflow artifact named `collection-<namespace>-<name>-<version>` with a 7-day retention.
 
 <br/>
 
@@ -187,16 +190,17 @@ The Galaxy API key is supplied via the `api_key` input (typically `${{ secrets.G
 
 ## How It Works
 
-1. **Validate inputs** — `type` must be `collection` or `role`; required fields per mode are enforced; `api_key` is required unless `dry_run: true`.
+1. **Validate inputs** — `type` must be `collection` or `role`; `namespace` and `name` are required; `api_key` is required unless `dry_run: true`.
 2. **`actions/setup-python`** — installs the requested Python version.
-3. **pip install** — installs `ansible` (or `ansible==<version>` if `ansible_version` is set).
+3. **pip install** — installs `ansible` (or `ansible==<version>` if `ansible_version` is set); PyYAML comes as a transitive dependency.
 4. **Collection mode**:
+   - Read `version` from `galaxy.yml` via `yaml.safe_load` → emit `collection_version` output
    - `ansible-galaxy collection build --force` in `working_directory`
-   - Locate the tarball `<namespace>-<name>-*.tar.gz` (highest semver wins) and expose it via `artifact_path`
-   - When `dry_run` is `false`, run `ansible-galaxy collection publish <tarball> --api-key=<key>`
+   - Locate the tarball `<namespace>-<name>-<version>.tar.gz` → expose via `artifact_path`
+   - When `dry_run` is `false`, run `ansible-galaxy collection publish <tarball> --api-key=<key>`; when `true`, skip and upload the tarball as a workflow artifact
 5. **Role mode**:
-   - When `dry_run` is `false`, run `ansible-galaxy role import --api-key <key> <namespace> <role_name>`
-6. **Summary & outputs** — write the published reference to `$GITHUB_STEP_SUMMARY` and `published_ref`. Dry-run results are prefixed with `dry-run:`.
+   - When `dry_run` is `false`, run `ansible-galaxy role import --api-key <key> <namespace> <name>`
+6. **Summary & outputs** — a markdown table is appended to `$GITHUB_STEP_SUMMARY` (mode, namespace, name, version, ref, artifact). Dry-run results are prefixed with `dry-run:`.
 
 <br/>
 
