@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased (2026-04-22)
+
+### Chores
+
+- **deps:** bump actions/download-artifact from 4 to 8 ([ab3d723](https://github.com/somaz94/ansible-galaxy-publish-action/commit/ab3d7239d4975d5def24c29b72254fbcb8c258d9))
+- drop unused docker dependabot ecosystem (composite action, no Dockerfile) ([4bf6ef2](https://github.com/somaz94/ansible-galaxy-publish-action/commit/4bf6ef2e478261bf5f3d04e5deedbde6de602157))
+- set CODEOWNERS to @somaz94 ([c61c2f4](https://github.com/somaz94/ansible-galaxy-publish-action/commit/c61c2f40a31214009f0aad7860bdfe9acdde60ba))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v1.1.0](https://github.com/somaz94/ansible-galaxy-publish-action/compare/v1.0.0...v1.1.0) (2026-04-21)
 
 ### Code Refactoring
